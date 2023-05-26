@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 
-sr, y = wavfile.read("sample.wav")
 
 def get_hann_windows(y, N=240, R=0.5):
     hop = math.ceil(N * R)
@@ -88,6 +87,8 @@ def get_spectrogram(y):
         axes[0].plot(magnitude, color='b')
         axes[1].plot(phase, color='g')
         plt.show()
+
+sr, y = wavfile.read("sample.wav")
 
 poffset, phop, pitches, powers = sweep_pitch_algorithm(y, sr)
 fig, axes = plt.subplots(3)

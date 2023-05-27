@@ -2,6 +2,7 @@ import numpy as np
 from scipy import signal
 import math
 import soundfile as sf
+from tqdm import tqdm
 
 class Signal:
     def __init__(self, y, sr):
@@ -15,7 +16,7 @@ class Signal:
 class LerpArray:
     # A linearly interpolatable array.
     def __init__(self, array):
-        self.fx = array
+        self.fx = np.array(array)
         self.x = np.arange(len(self.fx))
     
     def __getitem__(self, index):
@@ -82,7 +83,7 @@ def sweep_pitch_algorithm(frames, precision=1.0):
                 best_bins, best_power = j, total_power
 
         best_frequency = best_bins * bins_hz
-        print(f"Best Frequency: {best_frequency}")
+        print(f"Best Frequency: {round(best_frequency, 5)}")
         return best_frequency, best_power
 
     pitches, energies = [], []
@@ -95,22 +96,78 @@ def sweep_pitch_algorithm(frames, precision=1.0):
     return LerpArray(pitches), LerpArray(energies)
 
 
+class PitchMarkers:
+    def __init__(self, markers, markers_f):
+        self.markers = np.array(markers)
+        self.frequencies = np.array(markers_f)
+
+    def __len__(self):
+        return len(self.markers)
+
 def get_pitch_markers(frames, frame_pitches):
-    pitch_markers = []
+    pitch_markers, pitch_markers_f = [], []
     i = 0
     while i < len(frames.signal):
         f_i = frame_pitches[frames.get_frame_index(i)]
         hop = round(frames.sr / f_i)
         i += hop
         pitch_markers.append(i)
-    return pitch_markers
+        pitch_markers_f.append(f_i)
+    return PitchMarkers(pitch_markers, pitch_markers_f)
 
 
-def get_window_from_signal(signal, shape):
-    start_tail_length, start, end, end_tail_length = shape
-    #hanning =
+class Window:
+    def __init__(self, y):
+        self.weights = signal.hann(len(y))
+        self.window = self.weights * y
+
+def tune_pitches(pitches):
+    twelfth_root_two = 2**(1/6)
+    return LerpArray((1.5) * 440.0*(twelfth_root_two**np.round(np.log(pitches.fx/440.0)/np.log(twelfth_root_two))))
+
+def set_pitches(pitches, f=220):
+    return LerpArray(np.ones(len(pitches)) * f)
+
+
+def td_psola(y, sr, analysis_markers, target_markers, voiced=None):
+    y_output, y_density = np.zeros(len(y)), np.zeros(len(y)) + 0.00001
+
+    for i in tqdm(range(len(target_markers))):
+        target_idx = target_markers.markers[i]
+        closest_analysis_marker = np.argmin(np.abs(target_idx - analysis_markers.markers))
+        #analysis_window = get_analysis_window(closest_analysis_marker)
+
+        analysis_idx = analysis_markers.markers[closest_analysis_marker]
+        analysis_f = analysis_markers.frequencies[closest_analysis_marker]
+        period = round(sr / analysis_f)
+        t_s, t_e = analysis_idx - (2*period), analysis_idx + (2*period)
+        #if voiced is None or voiced[closest_analysis_marker]:
+        t_sa, t_ea = int(target_idx - (2*period)), int(target_idx + (2*period))
+        #else:
+        #    t_sa, t_ea = t_s, t_e
+
+        if t_s < 0 or t_sa < 0:
+            continue
+        if t_e >= len(y) or t_ea > len(y):
+            break
+
+        window = Window(y[t_s:t_e])
+        y_output[t_sa:t_ea] += window.window
+        y_density[t_sa:t_ea] += window.weights
+
+    #return y_output / np.max(np.abs(y_output)) #/ y_density
+    #return y_output / y_density
+    return y_output
+
+        
+
+
+#def get_window_from_signal(signal, shape):
+#    start_tail_length, start, end, end_tail_length = shape
+#    hanning =
 
 import matplotlib.pyplot as plt
+debug_pitch_synchronicity = False
 
 y, sr = sf.read('sample.wav')
 
@@ -118,6 +175,7 @@ frames = Frames(round(sr/5), 0.95)
 frames.frame_signal(y, sr)
 
 pitches, energies = sweep_pitch_algorithm(frames)
+energy_threshold = np.average(energies.fx) * 0.2
 
 print(len(frames))
 print(len(pitches))
@@ -126,20 +184,36 @@ print(len(energies))
 pitch_markers = get_pitch_markers(frames, pitches)
 print(len(pitch_markers))
 
-for test_i in range(50, 1000):
-    marker_sample = np.array(pitch_markers[test_i:test_i+10])
-    snip = np.array(y[marker_sample[0]:marker_sample[-1]])
-    xs = marker_sample[:-1] - pitch_markers[test_i]
-    print(xs)
-    print(snip[xs])
-    plt.plot(snip, color='b')
-    plt.scatter(xs, snip[xs], 20, 'r', 'o')
-    plt.show()
+if debug_pitch_synchronicity: # DEBUG
+    for test_i in range(50, 1000):
+        marker_sample = np.array(pitch_markers[test_i:test_i+10])
+        snip = np.array(y[marker_sample[0]:marker_sample[-1]])
+        xs = marker_sample[:-1] - pitch_markers[test_i]
+        print(xs)
+        print(snip[xs])
+        plt.plot(snip, color='b')
+        plt.scatter(xs, snip[xs], 20, 'r', 'o')
+        plt.show()
+
+#target_pitches = set_pitches(pitches, f=300)
+target_pitches = tune_pitches(pitches)
+target_markers = get_pitch_markers(frames, target_pitches)
+
+plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energies[frames.get_frame_index(pitch_marker)] for pitch_marker in pitch_markers.markers], 'y')
+plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energy_threshold for pitch_marker in pitch_markers.markers], 'b')
+plt.show()
+
+voiced = [energies[frames.get_frame_index(pitch_marker)] > energy_threshold for pitch_marker in pitch_markers.markers]
+#y_output = td_psola(y, sr, pitch_markers, target_markers)
+
+import psola
+y_psola = psola.vocode(y, sample_rate=int(sr), target_pitch=target_pitches.fx, fmin=50, fmax=4200)
 
 #fig, axes = plt.subplots(2)
 #axes[0].plot(pitches.fx, color='b')
 #axes[1].plot(energies.fx, color='y')
-plt.show()
+#plt.show()
 
 
-#sf.write('new_file.flac', data, samplerate)
+#sf.write('new_file9.wav', y_output, sr)
+sf.write('new_file9_psola.wav', y_psola, sr)

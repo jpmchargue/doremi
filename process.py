@@ -1,8 +1,8 @@
 import numpy as np
-from scipy import signal
 import math
 import soundfile as sf
 from tqdm import tqdm
+
 
 class Signal:
     def __init__(self, y, sr):
@@ -29,7 +29,7 @@ class Frames:
     def __init__(self, window_length, overlap):
         self.window_length = window_length
         self.hop_length = math.ceil(window_length * (1 - overlap))
-        self.hanning = signal.hann(self.window_length)
+        self.hanning = hann(self.window_length)
 
         self.signal = None
         self.sr = None
@@ -61,13 +61,16 @@ class Frames:
             return 0
         return len(self.frames)
 
+def hann(n):
+    # A gross, unreadable recreation of scipy.signal.hann(M).
+    return 0.5*np.cos(2*np.pi*((np.arange(n)/(n-1))-0.5))+0.5
 
 def sweep_pitch_algorithm(frames, precision=1.0):
     # returns a LerpArray of pitch frequencies and a LerpArray of energies for each frame
     f_min, f_max = 50, 1000
     bins_hz = frames.sr / frames.window_length
-    bins_min, bins_max = math.floor(f_min / bins_hz), math.ceil(f_max / bins_hz)
-    bins_precision = precision / bins_hz
+    bins_min, bins_max = math.floor(f_min / bins_hz), math.ceil(f_max / bins_hz) + 1
+    bins_precision = precision / round(bins_hz)
 
     def sweep_frequencies(spectrum):
         bins_stop = min(bins_max, len(spectrum))
@@ -83,12 +86,12 @@ def sweep_pitch_algorithm(frames, precision=1.0):
                 best_bins, best_power = j, total_power
 
         best_frequency = best_bins * bins_hz
-        #print(f"Best Frequency: {round(best_frequency, 5)}")
         return best_frequency, best_power
 
     pitches, energies = [], []
     for frame in tqdm(frames.frames):
-        spectrum = LerpArray(np.abs(np.fft.rfft(frame)))
+        board = np.abs(np.fft.fft(frame)[:bins_max])
+        spectrum = LerpArray(board)
         p, e = sweep_frequencies(spectrum)
         pitches.append(p)
         energies.append(e)
@@ -119,14 +122,15 @@ def get_pitch_markers(frames, frame_pitches):
 class Window:
     def __init__(self, y, periods=None):
         if periods is None:
-            self.weights = signal.hann(len(y))
+            self.weights = hann(len(y))
             self.window = self.weights * y
         else:
             period_left, period_right = periods
             self.weights = np.zeros(period_left + period_right)
-            self.weights[:period_left] = signal.hann(2 * period_left)[:period_left]
-            self.weights[-period_right:] = signal.hann(2 * period_right)[-period_right:]
+            self.weights[:period_left] = hann(2 * period_left)[:period_left]
+            self.weights[-period_right:] = hann(2 * period_right)[-period_right:]
             self.window = self.weights * y
+
 
 def tune_pitches(pitches, tonic="C", scale='major'):
     tonic_frequencies = {
@@ -159,7 +163,6 @@ def tune_pitches(pitches, tonic="C", scale='major'):
     log_pitches = np.log(pitches.fx/tonic_f)/np.log(twelfth_root_two)
     octave, tones = log_pitches // 12, log_pitches % 12
     closest_scale_tones = scale_tones[np.argmin(np.abs(np.expand_dims(tones, axis=1) - scale_tones), axis=1)]
-    #closest_scale_tones = scale_tones[np.argmin(np.abs(tones - scale_tones))]
     tuned_pitches = tonic_f * (twelfth_root_two**((octave * 12) + closest_scale_tones))
 
     return LerpArray(tuned_pitches)
@@ -167,17 +170,15 @@ def tune_pitches(pitches, tonic="C", scale='major'):
 def set_pitches(pitches, f=220):
     return LerpArray(np.ones(len(pitches)) * f)
 
-def td_psola(y, sr, analysis_markers, target_markers, voiced=None):
-    y_output, y_density = np.zeros(len(y)), np.zeros(len(y)) + 0.00001
+def td_psola(y, sr, analysis_markers, target_markers):
+    y_output = np.zeros(len(y))
 
     for i in tqdm(range(len(target_markers))):
         target_idx = target_markers.markers[i]
         closest_analysis_marker = np.argmin(np.abs(target_idx - analysis_markers.markers))
-        #analysis_window = get_analysis_window(closest_analysis_marker)
 
         analysis_idx = analysis_markers.markers[closest_analysis_marker]
         analysis_f = analysis_markers.frequencies[closest_analysis_marker]
-        #period = round(sr / analysis_f)
         period_left = min(
                 analysis_idx - analysis_markers.markers[closest_analysis_marker - 1] if closest_analysis_marker > 0 else analysis_idx,
                 target_idx - target_markers.markers[i - 1] if i > 0 else target_idx
@@ -187,11 +188,7 @@ def td_psola(y, sr, analysis_markers, target_markers, voiced=None):
                 target_markers.markers[i + 1] - target_idx if i < len(target_markers.markers) - 1 else round(sr / analysis_f)
         )
         t_s, t_e = analysis_idx - period_left, analysis_idx + period_right
-        #if voiced is None or voiced[closest_analysis_marker]:
         t_sa, t_ea = int(target_idx - period_left), int(target_idx + period_right)
-        #else:
-        #    t_sa, t_ea = t_s, t_e
-
         if t_s < 0 or t_sa < 0:
             continue
         if t_e >= len(y) or t_ea > len(y):
@@ -199,32 +196,20 @@ def td_psola(y, sr, analysis_markers, target_markers, voiced=None):
 
         window = Window(y[t_s:t_e], )
         y_output[t_sa:t_ea] += window.window
-        y_density[t_sa:t_ea] += window.weights
 
-    #return y_output / np.max(np.abs(y_output)) #/ y_density
-    #return y_output / y_density
     return y_output
 
-        
-
-
-#def get_window_from_signal(signal, shape):
-#    start_tail_length, start, end, end_tail_length = shape
-#    hanning =
 
 import matplotlib.pyplot as plt
 debug_pitch_synchronicity = False
 
 y, sr = sf.read('sample.wav')
 
-frames = Frames(round(sr/5), 0.95)
+frames = Frames(round(sr/10), 0.8)
 frames.frame_signal(y, sr)
 
 pitches, energies = sweep_pitch_algorithm(frames)
 energy_threshold = np.average(energies.fx) * 0.2
-
-plt.plot(pitches.fx, color='b')
-plt.show()
 
 print(len(frames))
 print(len(pitches))
@@ -248,6 +233,13 @@ if debug_pitch_synchronicity: # DEBUG
 target_pitches = tune_pitches(pitches, tonic="D", scale="major")
 target_markers = get_pitch_markers(frames, target_pitches)
 
+plt.plot(pitches.fx, label="Original")
+plt.plot(target_pitches.fx, color="blueviolet", label="Target")
+plt.title("Original and Target Frequencies")
+plt.ylabel("Frequency (Hz)")
+plt.legend()
+plt.show()
+
 plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energies[frames.get_frame_index(pitch_marker)] for pitch_marker in pitch_markers.markers], 'y')
 plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energy_threshold for pitch_marker in pitch_markers.markers], 'b')
 plt.show()
@@ -265,4 +257,4 @@ y_output = td_psola(y, sr, pitch_markers, target_markers)
 
 
 #sf.write('new_file9.wav', y_output, sr)
-sf.write('new_file_tune.wav', y_output, sr)
+sf.write('new_file_tune3.wav', y_output, sr)

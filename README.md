@@ -5,7 +5,7 @@ A minimalist implementation of a vocal autotuner in Python, with no external dep
 
 ```python
 import pytone
-pytone.tune("examples/original.wav", "examples/Dpentatonic.wav", "D", "pentatonic")
+pytone.tune("examples/original.wav", "examples/Dpentatonic.wav", key="D", scale="pentatonic")
 ```
 
 That's all there is to it. All twelve notes in the Western chromatic scale are supported, and can be referenced through any valid enharmonic notation excluding double sharps and double flats (e.g. "F" is the same as "E#"). A number can also be passed in place of the key letter for more precise tuning control:

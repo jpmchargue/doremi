@@ -150,7 +150,8 @@ def tune_pitches(pitches, tonic="C", scale='major'):
     scales = {
         "major": [0, 2, 4, 5, 7, 9, 11, 12],
         "minor": [0, 2, 3, 5, 7, 8, 10, 12],
-        "chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        "chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "pentatonic": [0, 2, 4, 7, 9, 12]
     }
 
     if type(tonic) == str:
@@ -167,26 +168,83 @@ def tune_pitches(pitches, tonic="C", scale='major'):
 
     return LerpArray(tuned_pitches)
 
+def smooth_pitches(pitches, minimum_frames=4):
+    """
+    Smoothes the target pitches of an autotuned sound.
+    If a target pitch is held for a segment of fewer than 'minimum_frames' frames,
+    and the target pitches on either end of the segment are the same,
+    then the segment is adjusted to match the target pitches on either end.
+    This helps to avoid one-frame jumps in the pitch due to vibrato.
+    Setting 'minimum_frames' to 1 disables smoothing.
+    """
+    # Create list of all segments
+    segments = []
+    segment_pitch, segment_duration = pitches.fx[0], 1
+    for i in range(1, len(pitches.fx)):
+        if pitches.fx[i] == segment_pitch:
+            segment_duration += 1
+        else:
+            segments.append([segment_pitch, segment_duration])
+            segment_pitch, segment_duration = pitches.fx[i], 1
+    segments.append([segment_pitch, segment_duration])
+
+    def smooth_segments_with_length(l):
+        i = 1
+        while i < len(segments) - 1:
+            if segments[i][1] != l:
+                i += 1
+            elif segments[i-1][0] == segments[i+1][0]:
+                segments[i-1][1] += (segments[i][1] + segments[i+1][1])
+                segments.pop(i+1)
+                segments.pop(i)
+            else:
+                i += 1
+
+    # Order of operations matters, so smooth the smallest segments first
+    for l in range(1, minimum_frames):
+        smooth_segments_with_length(l)
+    
+    new_pitches = []
+    for segment in segments:
+        new_pitches += [segment[0]] * segment[1]
+
+    return LerpArray(new_pitches)
+
+
 def set_pitches(pitches, f=220):
     return LerpArray(np.ones(len(pitches)) * f)
 
-def td_psola(y, sr, analysis_markers, target_markers):
+def td_psola(y, sr, analysis_markers, target_markers, target_voiced=None):
+    """
+    An implementation of the Time Domain Pitch Synchronous Overlap-Add algorithm,
+    with additional modifications inspiried by Praat.
+    """
     y_output = np.zeros(len(y))
 
     for i in tqdm(range(len(target_markers))):
         target_idx = target_markers.markers[i]
         closest_analysis_marker = np.argmin(np.abs(target_idx - analysis_markers.markers))
 
-        analysis_idx = analysis_markers.markers[closest_analysis_marker]
-        analysis_f = analysis_markers.frequencies[closest_analysis_marker]
-        period_left = min(
-                analysis_idx - analysis_markers.markers[closest_analysis_marker - 1] if closest_analysis_marker > 0 else analysis_idx,
-                target_idx - target_markers.markers[i - 1] if i > 0 else target_idx
-        )
-        period_right = min(
-                analysis_markers.markers[closest_analysis_marker + 1] - analysis_idx if closest_analysis_marker < len(analysis_markers.markers) - 1 else round(sr / analysis_f),
-                target_markers.markers[i + 1] - target_idx if i < len(target_markers.markers) - 1 else round(sr / analysis_f)
-        )
+        if target_voiced is not None and not target_voiced[i]:
+            # If this target marker is in an unvoiced (non-tonal) segment of the source signal,
+            # use the corresponding segment of the source sound directly
+            analysis_idx = target_idx
+            analysis_f = target_markers.frequencies[i]
+            period_left = target_idx - target_markers.markers[i - 1] if i > 0 else target_idx
+            period_right = target_markers.markers[i + 1] - target_idx if i < len(target_markers.markers) - 1 else round(sr / analysis_f)
+        else:
+            # Use a segment of the source sound from the nearest analysis marker
+            analysis_idx = analysis_markers.markers[closest_analysis_marker]
+            analysis_f = analysis_markers.frequencies[closest_analysis_marker]
+            period_left = min(
+                    analysis_idx - analysis_markers.markers[closest_analysis_marker - 1] if closest_analysis_marker > 0 else analysis_idx,
+                    target_idx - target_markers.markers[i - 1] if i > 0 else target_idx
+            )
+            period_right = min(
+                    analysis_markers.markers[closest_analysis_marker + 1] - analysis_idx if closest_analysis_marker < len(analysis_markers.markers) - 1 else round(sr / analysis_f),
+                    target_markers.markers[i + 1] - target_idx if i < len(target_markers.markers) - 1 else round(sr / analysis_f)
+            )
+
         t_s, t_e = analysis_idx - period_left, analysis_idx + period_right
         t_sa, t_ea = int(target_idx - period_left), int(target_idx + period_right)
         if t_s < 0 or t_sa < 0:
@@ -194,58 +252,51 @@ def td_psola(y, sr, analysis_markers, target_markers):
         if t_e >= len(y) or t_ea > len(y):
             break
 
-        window = Window(y[t_s:t_e], )
+        window = Window(y[t_s:t_e], (period_left, period_right))
         y_output[t_sa:t_ea] += window.window
 
     return y_output
 
 
 import matplotlib.pyplot as plt
-debug_pitch_synchronicity = False
+debug_autotune = False
 
-y, sr = sf.read('sample.wav')
+y, sr = sf.read('examples/original.wav')
 
 frames = Frames(round(sr/10), 0.8)
 frames.frame_signal(y, sr)
 
 pitches, energies = sweep_pitch_algorithm(frames)
-energy_threshold = np.average(energies.fx) * 0.2
+#energy_threshold = np.average(energies.fx) * 0.2
+energy_range = max(energies.fx) - min(energies.fx)
+energy_threshold = (energy_range * 0.1) + min(energies.fx)
 
-print(len(frames))
-print(len(pitches))
-print(len(energies))
-
-pitch_markers = get_pitch_markers(frames, pitches)
-print(len(pitch_markers))
-
-if debug_pitch_synchronicity: # DEBUG
-    for test_i in range(50, 1000):
-        marker_sample = np.array(pitch_markers[test_i:test_i+10])
-        snip = np.array(y[marker_sample[0]:marker_sample[-1]])
-        xs = marker_sample[:-1] - pitch_markers[test_i]
-        print(xs)
-        print(snip[xs])
-        plt.plot(snip, color='b')
-        plt.scatter(xs, snip[xs], 20, 'r', 'o')
-        plt.show()
+source_markers = get_pitch_markers(frames, pitches)
+source_voiced_idx = np.where(energies[frames.get_frame_index(source_markers.markers)] > energy_threshold)
+analysis_markers = PitchMarkers(source_markers.markers[source_voiced_idx], source_markers.frequencies[source_voiced_idx])
 
 #target_pitches = set_pitches(pitches, f=300)
 target_pitches = tune_pitches(pitches, tonic="D", scale="major")
-target_markers = get_pitch_markers(frames, target_pitches)
+target_pitches_smooth = smooth_pitches(target_pitches)
+target_markers = get_pitch_markers(frames, target_pitches_smooth)
+target_voiced = energies[frames.get_frame_index(target_markers.markers)] > energy_threshold
 
 plt.plot(pitches.fx, label="Original")
-plt.plot(target_pitches.fx, color="blueviolet", label="Target")
+plt.plot(target_pitches_smooth.fx, color="blueviolet", label="Target")
 plt.title("Original and Target Frequencies")
 plt.ylabel("Frequency (Hz)")
+plt.xlabel("Frame")
 plt.legend()
 plt.show()
 
-plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energies[frames.get_frame_index(pitch_marker)] for pitch_marker in pitch_markers.markers], 'y')
-plt.plot([pitch_marker for pitch_marker in pitch_markers.markers], [energy_threshold for pitch_marker in pitch_markers.markers], 'b')
+fig, axes = plt.subplots(2)
+axes[0].plot([pitch_marker for pitch_marker in source_markers.markers], [energies[frames.get_frame_index(pitch_marker)] for pitch_marker in source_markers.markers], 'y')
+axes[0].plot([pitch_marker for pitch_marker in source_markers.markers], [energy_threshold for pitch_marker in source_markers.markers], 'b')
+axes[1].plot(target_voiced * 1.0, 'k')
 plt.show()
 
 #voiced = [energies[frames.get_frame_index(pitch_marker)] > energy_threshold for pitch_marker in pitch_markers.markers]
-y_output = td_psola(y, sr, pitch_markers, target_markers)
+y_output = td_psola(y, sr, analysis_markers, target_markers, target_voiced)
 
 #import psola
 #y_psola = psola.vocode(y, sample_rate=int(sr), target_pitch=target_pitches.fx, fmin=50, fmax=4200)
@@ -257,4 +308,4 @@ y_output = td_psola(y, sr, pitch_markers, target_markers)
 
 
 #sf.write('new_file9.wav', y_output, sr)
-sf.write('new_file_tune3.wav', y_output, sr)
+sf.write('examples/Dmajor.wav', y_output, sr)

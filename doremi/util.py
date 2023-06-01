@@ -4,6 +4,9 @@ import soundfile as sf
 
 
 class Signal:
+    """
+    Data for a sound file.
+    """
     def __init__(self, y, sr):
         self.y = y
         self.sr = sr
@@ -16,7 +19,9 @@ class Signal:
         sf.write(filename, self.y, self.sr)
 
 class LerpArray:
-    # A linearly interpolatable array.
+    """
+    A linearly interpolatable array.
+    """
     def __init__(self, array):
         self.fx = np.array(array)
         self.x = np.arange(len(self.fx))
@@ -28,6 +33,9 @@ class LerpArray:
         return len(self.fx)
 
 class Frames:
+    """
+    A structure to organize the individual windows of a framed signal.
+    """
     def __init__(self, window_length, overlap):
         self.window_length = window_length
         self.hop_length = math.ceil(window_length * (1 - overlap))
@@ -64,10 +72,16 @@ class Frames:
         return len(self.frames)
 
 def hann(n):
-    # A gross, unreadable recreation of scipy.signal.hann(M).
+    """
+    A gross, unreadable recreation of scipy.signal.hann(M).
+    """
     return 0.5*np.cos(2*np.pi*((np.arange(n)/(n-1))-0.5))+0.5
 
 class Window:
+    """
+    A helper class for TD-PSOLA. 
+    Makes it easier to construct unbalanced Hanning windows from a signal.
+    """
     def __init__(self, y, periods=None):
         if periods is None:
             self.weights = hann(len(y))
@@ -80,6 +94,9 @@ class Window:
             self.window = self.weights * y
 
 class PitchMarkers:
+    """
+    A series of indices of pitch-synchronous markers in a signal.
+    """
     def __init__(self, markers, markers_f):
         self.markers = np.array(markers)
         self.frequencies = np.array(markers_f)

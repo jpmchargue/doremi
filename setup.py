@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='doremi',
-    version='1.0.0',
+    version='1.0.1',
     author='James McHargue',
     author_email='jpmchargue@gmail.com',
     description='A minimalist vocal autotuner for Python.',

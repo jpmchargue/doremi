@@ -9,12 +9,13 @@ from .tuners import (
     sweep_pitch_algorithm, 
     get_pitch_markers, 
     tune_pitches, 
-    smooth_pitches
+    smooth_pitches,
+    balance_pitches
 )
 from .td_psola import td_psola
 
 
-def tune(filename, output_filename, key="C", scale="major", debug=False):
+def tune(filename, output_filename, key="C", scale="major", attack=0.0, strength=1.0, minimum_frames=4, debug=False):
     signal = Signal.from_file(filename)
 
     frames = Frames(round(signal.sr/10), 0.8)
@@ -29,14 +30,15 @@ def tune(filename, output_filename, key="C", scale="major", debug=False):
     analysis_markers = PitchMarkers(source_markers.markers[source_voiced_idx], source_markers.frequencies[source_voiced_idx])
 
     target_pitches = tune_pitches(pitches, tonic=key, scale=scale)
-    target_pitches_smooth = smooth_pitches(target_pitches)
-    target_markers = get_pitch_markers(frames, target_pitches_smooth)
+    target_pitches_smooth = smooth_pitches(target_pitches, minimum_frames=minimum_frames)
+    target_pitches_balanced = balance_pitches(pitches, target_pitches_smooth, attack=attack, strength=strength)
+    target_markers = get_pitch_markers(frames, target_pitches_balanced)
     target_voiced = energies[frames.get_frame_index(target_markers.markers)] > energy_threshold
 
     if debug:
         import matplotlib.pyplot as plt
         plt.plot(pitches.fx, label="Original")
-        plt.plot(target_pitches_smooth.fx, color="blueviolet", label="Target")
+        plt.plot(target_pitches_balanced.fx, color="blueviolet", label="Target")
         plt.title("Original and Target Frequencies")
         plt.ylabel("Frequency (Hz)")
         plt.xlabel("Frame")

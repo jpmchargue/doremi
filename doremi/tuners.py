@@ -145,6 +145,24 @@ def smooth_pitches(pitches, minimum_frames=4):
 
     return LerpArray(new_pitches)
 
+def balance_pitches(pitches, target_pitches, attack=0.0, strength=1.0):
+    attack_frames = int(((attack * 10) / (1 - 0.8)) + 1)
+    balance = np.zeros(len(target_pitches.fx))
+    balance[0] = strength / attack_frames
+    current_pitch, current_count = target_pitches.fx[0], 1
+    for i in range(1, len(target_pitches.fx)):
+        if target_pitches.fx[i] != current_pitch:
+            current_pitch, current_count = target_pitches.fx[i], 1
+        else:
+            current_count += 1
+        balance[i] = (strength * min(current_count, attack_frames)) / attack_frames
+
+    import matplotlib.pyplot as plt
+    plt.plot(balance)
+    plt.show()
+
+    return LerpArray((pitches.fx * (1 - balance)) + (target_pitches.fx * balance))
+
 def set_pitches(pitches, f):
     """
     Creates a new LerpArray of pitch measurements of the same length 

@@ -103,14 +103,16 @@ def tune_pitches(pitches, tonic="C", scale='major'):
 
     return LerpArray(tuned_pitches)
 
-def smooth_pitches(pitches, minimum_frames=4):
+def smooth_pitches(pitches, minimum_vib_frames=8, minimum_gliss_frames=8):
     """
-    Smoothes the target pitches of an autotuned sound.
-    If a target pitch is held for a segment of fewer than 'minimum_frames' frames,
+    Smoothes the target pitches of an autotuned sound to eliminate artifacts from vibrato and glissando.
+    If a target pitch is held for a segment of fewer than 'minimum_vib_frames' frames,
     and the target pitches on either end of the segment are the same,
     then the segment is adjusted to match the target pitches on either end.
-    This helps to avoid one-frame jumps in the pitch due to vibrato.
-    Setting 'minimum_frames' to 1 disables smoothing.
+    Similarly, if a pitch is held for a segment of fewer than 'minimum_gliss_frames' frames,
+    and the pitch is between the pitches of the neighboring segments,
+    then the pitch is adjusted to match the LATER neighboring segment.
+    Setting either 'minimum_frames' to 1 disables its respective smoothing.
     """
     # Create list of all segments
     segments = []
@@ -135,9 +137,23 @@ def smooth_pitches(pitches, minimum_frames=4):
             else:
                 i += 1
 
+    def simplify_segments():
+        i = 1
+        while i < len(segments) - 1:
+            if segments[i][1] >= minimum_gliss_frames:
+                i += 1
+            elif segments[i-1][0] < segments[i][0] < segments[i+1][0] or segments[i-1][0] > segments[i][0] > segments[i+1][0]:
+                segments[i+1][1] += segments[i][1]
+                segments.pop(i)
+            else:
+                i += 1
+
     # Order of operations matters, so smooth the smallest segments first
-    for l in range(1, minimum_frames):
+    for l in range(1, minimum_vib_frames):
         smooth_segments_with_length(l)
+
+    # Simplify pitch segments from earliest to latest
+    simplify_segments()
     
     new_pitches = []
     for segment in segments:
@@ -156,10 +172,6 @@ def balance_pitches(pitches, target_pitches, attack=0.0, strength=1.0):
         else:
             current_count += 1
         balance[i] = (strength * min(current_count, attack_frames)) / attack_frames
-
-    import matplotlib.pyplot as plt
-    plt.plot(balance)
-    plt.show()
 
     return LerpArray((pitches.fx * (1 - balance)) + (target_pitches.fx * balance))
 

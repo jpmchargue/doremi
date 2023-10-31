@@ -1,1 +1,1 @@
-from .doremi import tune
+from .doremi import tune, tune_manual, harmonize, Segments

@@ -103,3 +103,32 @@ class PitchMarkers:
 
     def __len__(self):
         return len(self.markers)
+    
+class Segments:
+    """
+    A list of pitches with accompanying starting frame indices.
+    """
+    def __init__(self, pitches, frame_indices, glissandos=None):
+        self.pitches = np.array(pitches)
+        self.frame_indices = np.array(frame_indices)
+        self.glissandos = np.zeros(len(pitches)) if glissandos is None else np.array(glissandos)
+
+    def transpose(self, semitones):
+        twelfth_root_two = 2**(1/12)
+        self.pitches = self.pitches * (twelfth_root_two ** semitones)
+
+    def get_target_pitches(self, L):
+        """
+        Create a frame-by-frame target pitch sequence of length L from these segments.
+        """
+        target_pitches = np.zeros(L)
+        valid_indices = [f_i for f_i in self.frame_indices if f_i < L]
+        for i in range(len(valid_indices) - 1):
+            if self.glissandos[i]:
+                target_pitches[valid_indices[i]:valid_indices[i+1]] = \
+                        np.linspace(self.pitches[i], self.pitches[i+1], valid_indices[i+1]-valid_indices[i], endpoint=False)
+            else:
+                target_pitches[valid_indices[i]:valid_indices[i+1]] = self.pitches[i]
+        target_pitches[valid_indices[-1]:] = self.pitches[i+1]
+
+        return LerpArray(target_pitches)

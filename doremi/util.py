@@ -113,6 +113,9 @@ class Segments:
         self.frame_indices = np.array(frame_indices)
         self.glissandos = np.zeros(len(pitches)) if glissandos is None else np.array(glissandos)
 
+    def copy(segments):
+        return Segments(segments.pitches, segments.frame_indices, segments.glissandos)
+
     def transpose(self, semitones):
         twelfth_root_two = 2**(1/12)
         self.pitches = self.pitches * (twelfth_root_two ** semitones)

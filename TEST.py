@@ -9,4 +9,4 @@ s1.transpose(-4)
 s2.transpose(-4)
 s3.transpose(-4)
 
-doremi.harmonize("examples/original.wav", "testing/harmonize2.wav", [s1, s2, s3], debug=True)
+doremi.harmonize("examples/original.wav", "examples/manual_tune/harmonize5.wav", [s1, s2, s3], chorus=True, debug=True)

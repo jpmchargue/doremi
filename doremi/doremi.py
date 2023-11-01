@@ -90,11 +90,28 @@ def tune_manual(filename, output_filename, segments, attack=0.0, strength=1.0, m
     return signal_output, pitches, target_pitches
 
 
-def harmonize(filename, output_filename, tracks, debug=False):
+def harmonize(filename, output_filename, tracks, chorus=False, debug=False):
+    if chorus and False:
+        chorus_tracks = []
+        for segment in tracks:
+            chorus_track = Segments.copy(segment)
+            chorus_track.transpose(-0.15)
+            chorus_tracks.append(chorus_track)
+            chorus_track = Segments.copy(segment)
+            chorus_track.transpose(0.15)
+            chorus_tracks.append(chorus_track)
+        tracks.extend(chorus_tracks)
+
     signals = []
     original_pitches, target_pitches = None, []
     for segments in tracks:
         signal_output, o_p, t_p = tune_manual(filename, None, segments)
+
+        if chorus:
+            sample_offset = np.random.randint(0, signal_output.sr / 20)
+            signal_output.y = np.roll(signal_output.y, sample_offset)
+            signal_output.y[:sample_offset] = 0.0
+
         signals.append(signal_output.y)
         original_pitches = o_p
         target_pitches.append(t_p)
